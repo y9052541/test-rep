@@ -83,144 +83,58 @@ def conv2d_turning(*args):
     ops, bufs = function(*args)
     data, kernel, conv = bufs
     s = tvm.create_schedule(conv.op)
-        
+
 
     ##### space definition begin #####
-    if rx==1 and ry==1:
-        C=tvm.compute((n,f,v,x),
-            lambda i,j,k,l:tvm.sum(data[i][j+rc][k][l]*kernel[j][rc][0][0],axis=rc),name='C')
-        ss= tvm.create_schedule(C.op)
-        n, f, y, x = ss[C].op.axis
-        rc= ss[C].op.reduce_axis
-        cfg = autotvm.get_config()
-        cfg.define_split("tile_f", f, num_outputs=4)
-        cfg.define_split("tile_y", y, num_outputs=4)
-        cfg.define_split("tile_x", x, num_outputs=4)
-        cfg.define_split("tile_rc", rc, num_outputs=3)
-        cfg.define_knob("auto_unroll_max_step", [0, 512, 1500])
-        ##### space definition end #####
-
-        # inline padding
-        pad_data = ss[C].op.input_tensors[0]
-        ss[pad_data].compute_inline()
-        data, raw_data = pad_data, data
-
-        output = C
-        OL = ss.cache_write(C, 'global')
-        # tile and bind spatial axes
-        n, f, y, x = ss[output].op.axis
-        bf, vf, tf, fi = cfg["tile_f"].apply(ss, output, f)
-        by, vy, ty, yi = cfg["tile_y"].apply(ss, output, y) 
-        bx, vx, tx, xi = cfg["tile_x"].apply(ss, output, x)
-        kernel_scope = n  # this is the scope to attach global config inside this kernel
-
-        ss[output].reorder(n, bf, by, bx, vf, vy, vx, tf, ty, tx, fi, yi, xi)
-        fuse = ss[output].fuse(yi, xi)
-        ss[output].vectorize(fuse)
-        ss[OL].compute_at(ss[output], tx)
-
-        # tile reduction axes
-        n, f, y, x = ss[OL].op.axis
-        rc,= ss[OL].op.reduce_axis
-        rco, rcm, rci = cfg['tile_rc'].apply(ss, OL, rc)
-        ss[OL].reorder(n, rco,rcm, rci, f, y, x)
-
-        n, f, y, x = ss[C].op.axis
-        ss[C].parallel(n)
-
-        #print(tvm.lower(s, [data, kernel, conv], simple_mode=True))
-
-        return ss, [raw_data, kernel, C]
-
-
-
-    else:
-        n, f, y, x = s[conv].op.axis
-        rc, ry, rx = s[conv].op.reduce_axis
-       
-
-        cfg = autotvm.get_config()
-        cfg.define_split("tile_f", f, num_outputs=4)
-        cfg.define_split("tile_y", y, num_outputs=4)
-        cfg.define_split("tile_x", x, num_outputs=4)
-        cfg.define_split("tile_rc", rc, num_outputs=3)
-        cfg.define_split("tile_ry", ry, num_outputs=3)
-        cfg.define_split("tile_rx", rx, num_outputs=3)
-        cfg.define_knob("auto_unroll_max_step", [0, 512, 1500])
-        ##### space definition end #####
-
-        # inline padding
-        pad_data = s[conv].op.input_tensors[0]
-        s[pad_data].compute_inline()
-        data, raw_data = pad_data, data
-    
-
-
-        output = conv
-        OL = s.cache_write(conv, 'global')
-        # tile and bind spatial axes
-        n, f, y, x = s[output].op.axis
-        bf, vf, tf, fi = cfg["tile_f"].apply(s, output, f)
-        by, vy, ty, yi = cfg["tile_y"].apply(s, output, y)
-        bx, vx, tx, xi = cfg["tile_x"].apply(s, output, x)
-        kernel_scope = n  # this is the scope to attach global config inside this kernel
-
-        s[output].reorder(n, bf, by, bx, vf, vy, vx, tf, ty, tx, fi, yi, xi)
-        fuse = s[output].fuse(yi, xi)
-        s[output].vectorize(fuse)
-        if (args[0] == 4 and args[1] == 112 and args[2] == 14 and args[4] == 224):
-            s[output].unroll(fi)
-        s[OL].compute_at(s[output], tx)
-
-        # tile reduction axes
-        n, f, y, x = s[OL].op.axis
-        rc, ry, rx = s[OL].op.reduce_axis
-        rco, rcm, rci = cfg['tile_rc'].apply(s, OL, rc)
-        ryo, rym, ryi = cfg['tile_rx'].apply(s, OL, ry)
-        rxo, rxm, rxi = cfg['tile_ry'].apply(s, OL, rx)
-        s[OL].reorder(n, rco, ryo, rxo, rcm, rym, rxm, rci, ryi, rxi, f, y, x)
-
-        n, f, y, x = s[conv].op.axis
-        s[conv].parallel(n)
-
-        #print(tvm.lower(s, [data, kernel, conv], simple_mode=True))
-
-        return s, [raw_data, kernel, conv]
-
-def conv2d_turning_1x1(*args):
-    global function
-    ops, bufs = function(*args)
-    data, kernel, conv = bufs
-    s = tvm.create_schedule(conv.op)
     n, f, y, x = s[conv].op.axis
     rc, ry, rx = s[conv].op.reduce_axis
 
-    if ry==y and rx==x:
-        n, f, y, x = s[conv].op.axis
-        rc, ry, rx = s[conv].op.reduce_axis
-        fo,fi=s[conv].split(f,factor=16)
-        xo,yo,xi,yi=s[conv].tile(y,x,x_factor=8,y_factor=8)
+    cfg = autotvm.get_config()
+    cfg.define_split("tile_f", f, num_outputs=4)
+    cfg.define_split("tile_y", y, num_outputs=4)
+    cfg.define_split("tile_x", x, num_outputs=4)
+    cfg.define_split("tile_rc", rc, num_outputs=3)
+    cfg.define_split("tile_ry", ry, num_outputs=3)
+    cfg.define_split("tile_rx", rx, num_outputs=3)
+    cfg.define_knob("auto_unroll_max_step", [0, 512, 1500])
+    ##### space definition end #####
 
-    else:
-        cfg=autotvm.get.config()
-        n, f, y, x = s[conv].op.axis
-        rc, ry, rx = s[conv].op.reduce_axis
-        
-        factor_range = [2, 4, 8, 16, 32, 64]
-        cfg.define_knob('tile_factor_x', factor_range)
-        cfg.define_knob('tile_factor_y', factor_range)
-        bx = cfg['tile_factor_x'].val
-        by = cfg['tile_factor_y'].val
+    # inline padding
+    pad_data = s[conv].op.input_tensors[0]
+    s[pad_data].compute_inline()
+    data, raw_data = pad_data, data
+    
 
-        fo,fi=s[conv].split(f,factor=bx)
-        xo,yo,xi,yi=s[conv].tile(y,x,x_factor=by,y_factor=by)
 
-    s[conv].reorder(n,fo,xo,yo,fi,xi,yi)
-    s[conv].vectorize(yi)
-    fused=s[conv].fuse(n,fo)
-    s[conv].parallel(fused)
+    output = conv
+    OL = s.cache_write(conv, 'global')
+    # tile and bind spatial axes
+    n, f, y, x = s[output].op.axis
+    bf, vf, tf, fi = cfg["tile_f"].apply(s, output, f)
+    by, vy, ty, yi = cfg["tile_y"].apply(s, output, y)
+    bx, vx, tx, xi = cfg["tile_x"].apply(s, output, x)
+    kernel_scope = n  # this is the scope to attach global config inside this kernel
 
-    return s, [data, kernel, conv]
+    s[output].reorder(n, bf, by, bx, vf, vy, vx, tf, ty, tx, fi, yi, xi)
+    fuse = s[output].fuse(yi, xi)
+    s[output].vectorize(fuse)
+    if (args[0] == 4 and args[1] == 112 and args[2] == 14 and args[4] == 224):
+        s[output].unroll(fi)
+    s[OL].compute_at(s[output], tx)
+
+    # tile reduction axes
+    n, f, y, x = s[OL].op.axis
+    rc, ry, rx = s[OL].op.reduce_axis
+    rco, rcm, rci = cfg['tile_rc'].apply(s, OL, rc)
+    ryo, rym, ryi = cfg['tile_rx'].apply(s, OL, ry)
+    rxo, rxm, rxi = cfg['tile_ry'].apply(s, OL, rx)
+    s[OL].reorder(n, rco, ryo, rxo, rcm, rym, rxm, rci, ryi, rxi, f, y, x)
+
+    n, f, y, x = s[conv].op.axis
+    s[conv].parallel(n)
+
+    #print(tvm.lower(s, [data, kernel, conv], simple_mode=True))
+    return s, [raw_data, kernel, conv]
 
 def hello(p):
     os.kill(p.pid, signal.SIGKILL)
